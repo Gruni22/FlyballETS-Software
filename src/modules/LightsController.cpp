@@ -1,3 +1,21 @@
+// file:	LightsController.cpp
+//
+// summary:	Implements the lights controller class
+// Copyright (C) 2019 Alex Goris
+// This file is part of FlyballETS-Software
+// FlyballETS-Software is free software : you can redistribute it and / or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.If not, see <http://www.gnu.org/licenses/>
+
 #include "LightsController.h"
 #include "LCDController.h"
 #include "RaceHandler.h"
@@ -80,19 +98,17 @@ void LightsControllerClass::Main()
    {
       if (millis() > _lLightsOnSchedule[i] && _lLightsOnSchedule[i] != 0)
       {
-         //Serial.printf("ToggleLightState %i On\r\n", i);
          ToggleLightState(_byLightsArray[i], ON);
-         _lLightsOnSchedule[i] = 0; // Delete schedule
+         _lLightsOnSchedule[i] = 0;
       }
       if (millis() > _lLightsOutSchedule[i] && _lLightsOutSchedule[i] != 0)
       {
-         //Serial.printf("ToggleLightState %i Off\r\n", i);
          ToggleLightState(_byLightsArray[i], OFF);
-         _lLightsOutSchedule[i] = 0; // Delete schedule
+         _lLightsOutSchedule[i] = 0;
 
          if (i < 2)
             {
-               WebHandler.bUpdateLights = true;
+               WebHandler.bSendLightsAndRaceData = true;
                //log_d("UpdateLights i<2");
             }
       }
@@ -100,12 +116,11 @@ void LightsControllerClass::Main()
 
    if (_byCurrentLightsState != _byNewLightsState)
    {
-      //Serial.printf("New light states: %i\r\n", _byNewLightsState);
       _byCurrentLightsState = _byNewLightsState;
       digitalWrite(_iLatchPin, LOW);
       shiftOut(_iDataPin, _iClockPin, MSBFIRST, _byCurrentLightsState);
       digitalWrite(_iLatchPin, HIGH);
-      WebHandler.bUpdateLights = true;
+      WebHandler.bSendLightsAndRaceData = true;
    }
 }
 

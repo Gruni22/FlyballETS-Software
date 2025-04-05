@@ -42,8 +42,8 @@ void setup()
    SettingsManager.init();
 
    // Configure sensors pins
-   pinMode(iS1Pin, INPUT_PULLDOWN); // ESP32 has no pull-down resistor on pin 34, but it's pulled-down anyway by 1kohm resistor in voltage leveler circuit
-   pinMode(iS2Pin, INPUT_PULLDOWN);
+   pinMode(iS1Pin, INPUT);
+   pinMode(iS2Pin, INPUT);
 
    // Initialize lights
    pinMode(iDataPin, OUTPUT);

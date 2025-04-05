@@ -1,6 +1,4 @@
 #include "WebHandler.h"
-#include <ElegantOTA.h>
-#include "LCDController.h"
 
 void WebHandlerClass::init(int webPort)
 {
@@ -38,36 +36,25 @@ void WebHandlerClass::init(int webPort)
    // Favicon handler
    _server->on("/favicon.ico", HTTP_GET, std::bind(&WebHandlerClass::_onFavicon, this, std::placeholders::_1));
 
-   // ElegantOTA
-   String password = SettingsManager.getSetting("AdminPass");
-   char httpPassword[password.length() + 1];
-   password.toCharArray(httpPassword, password.length() + 1);
-   ElegantOTA.begin(_server, "Admin", httpPassword);
-   ElegantOTA.onStart([]() {
-      Serial.println("\n""Firmware update via WebUI initiated.");
-      LCDController.FirmwareUpdateInit(); });
-   ElegantOTA.onProgress([](size_t current, size_t final) {
-      uint16_t iProgressPercentage = (current * 100) / final;
-      if (WebHandler.uiLastProgress != iProgressPercentage)
-      {
-         Serial.printf("Progress: %u%%\r", iProgressPercentage);
-         String sProgressPercentage = String(iProgressPercentage);
-         while (sProgressPercentage.length() < 3)
-            sProgressPercentage = " " + sProgressPercentage;
-         LCDController.FirmwareUpdateProgress(sProgressPercentage);
-         WebHandler.uiLastProgress = iProgressPercentage;
-      } });
-   ElegantOTA.onEnd([](bool success) {
-      if (success)
-      {
-         Serial.println("\nUpdate via WebUI completed.\r\n");
-         LCDController.FirmwareUpdateSuccess();
-      }
-      else
-         Serial.println("Update via WebUI failed.");
-      });
+   // OTA update
+   _server->on("/update", HTTP_GET, [](AsyncWebServerRequest *request)
+               { request->send_P(200, "text/html", ota_html); });
+
+   _server->on("/jquery.min.js", HTTP_GET, [](AsyncWebServerRequest *request)
+               { request->send_P(200, "application/javascript", jquery_min_js); });
+
+   _server->on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request)
+               {  request->send(200, "text/plain", "Device will reboot in 2 seconds");
+                  delay(2000);
+                  ESP.restart(); });
+
+   _server->on("/doupdate", HTTP_POST, [](AsyncWebServerRequest *request) {},
+      [](AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len, bool final)
+      { WebHandler.handleDoUpdate(request, filename, index, data, len, final); });
 
    _server->begin();
+   Update.onProgress([this](size_t prg, size_t sz) -> void
+                     { printProgress(prg, sz); });
 
    _lLastRaceDataBroadcast = 0;
    _lLastSystemDataBroadcast = 0;
@@ -87,11 +74,15 @@ void WebHandlerClass::loop()
    unsigned long lCurrentUpTime = millis();
    if ((lCurrentUpTime - _lLastRaceDataBroadcast > _iRaceDataBroadcastInterval) && !bSendRaceData && (RaceHandler.RaceState == RaceHandler.STARTING || RaceHandler.RaceState == RaceHandler.RUNNING))
       bSendRaceData = true;
-   //log_d("bSendRaceData: %i, bUpdateLights: %i, since LastBroadcast: %ul, since WS received: %ul", bSendRaceData, bUpdateLights, (lCurrentUpTime - _lLastBroadcast), (lCurrentUpTime - _lWebSocketReceivedTime));
+ 
    if ((lCurrentUpTime - _lLastBroadcast > 100) && (lCurrentUpTime - _lWebSocketReceivedTime > 50))
    {
-      if (bUpdateLights)
+      if (bSendLightsAndRaceData)
+      {
+         bSendLightsAndRaceData = false;
          _SendLightsData();
+         _SendRaceData(RaceHandler.iCurrentRaceId, -1);
+      }
       else if (bSendRaceData)
          _SendRaceData(RaceHandler.iCurrentRaceId, -1);
       else if (RaceHandler.RaceState == RaceHandler.RESET || (RaceHandler.RaceState == RaceHandler.STOPPED && RaceHandler.bIgnoreSensors))
@@ -100,16 +91,12 @@ void WebHandlerClass::loop()
             _SendSystemData();
          if (lCurrentUpTime - _lLastPingBroadcast > _iPingBroadcastInterval)
          {
-            //_ws->pingAll();
             _ws->cleanupClients();
             log_d("Have %i clients, %i consumers", _ws->count(), _iNumOfConsumers);
-            //_lLastBroadcast = millis();
             _lLastPingBroadcast = millis();
          }
       }
    }
-   if (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET)
-      ElegantOTA.loop();
 }
 
 void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len)
@@ -120,7 +107,6 @@ void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *cli
    {
       log_i("Client %i connected to %s!", client->id(), server->url());
 
-      // Access via /wsa. Checking if clinet/consumer has already athenticated
       if (isAdmin)
       {
          if (!_wsAuth(client))
@@ -129,8 +115,6 @@ void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *cli
             return;
          }
       }
-      // client->ping();
-      // client->keepAlivePeriod(10);
    }
    else if (type == WS_EVT_DISCONNECT)
    {
@@ -156,9 +140,6 @@ void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *cli
       String msg = "";
       if (info->final && info->index == 0 && info->len == len)
       {
-         // the whole message is in a single frame and we got all of it's data
-         // log_d("ws[%s][%u] %s-message[%llu]: ", server->url(), client->id(), (info->opcode == WS_TEXT) ? "text" : "binary", info->len);
-
          if (info->opcode == WS_TEXT)
          {
             data[len] = 0;
@@ -177,7 +158,6 @@ void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *cli
       }
       else
       {
-         // message is comprised of multiple frames or the frame is split into multiple packets
          if (info->index == 0)
          {
             if (info->num == 0)
@@ -212,7 +192,7 @@ void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *cli
       }
 
       // Parse JSON input
-      StaticJsonDocument<768> jsonRequestDoc;
+      JsonDocument jsonRequestDoc;
       DeserializationError error = deserializeJson(jsonRequestDoc, msg);
       JsonObject request = jsonRequestDoc.as<JsonObject>();
       if (error)
@@ -223,25 +203,26 @@ void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *cli
       }
 
       _lWebSocketReceivedTime = millis();
-      // const size_t bufferSize = JSON_ARRAY_SIZE(50) + 50 * JSON_OBJECT_SIZE(3);
-      const size_t bufferSize = 384;
-      StaticJsonDocument<bufferSize> jsonResponseDoc;
+      JsonDocument jsonResponseDoc;
       JsonObject JsonResponseRoot = jsonResponseDoc.to<JsonObject>();
 
-      if (request.containsKey("action"))
+      String sAction = request["action"];
+      String sConfig = request["config"];
+      String sGetData = request["getData"];
+      if (sAction != "null")
       {
-         JsonObject ActionResult = JsonResponseRoot.createNestedObject("ActionResult");
+         JsonObject ActionResult = JsonResponseRoot["ActionResult"].to<JsonObject>();
          String errorText;
          bool result = _DoAction(request["action"].as<JsonObject>(), &errorText, client);
          ActionResult["success"] = result;
          ActionResult["error"] = errorText;
       }
-      else if (request.containsKey("config"))
+      else if (sConfig != "null")
       {
-         JsonObject ConfigResult = JsonResponseRoot.createNestedObject("configResult");
+         JsonObject ConfigResult = JsonResponseRoot["configResult"].to<JsonObject>();
          String errorText;
          JsonArray config = request["config"].as<JsonArray>();
-         // We allow setting config only over admin websocket
+
          bool result;
          if (isAdmin)
          {
@@ -255,11 +236,11 @@ void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *cli
          ConfigResult["success"] = result;
          ConfigResult["error"] = errorText;
       }
-      else if (request.containsKey("getData"))
+      else if (sGetData != "null")
       {
-         String dataName = request["getData"];
-         JsonObject DataResult = JsonResponseRoot.createNestedObject("dataResult");
-         JsonObject DataObject = DataResult.createNestedObject(dataName + "Data");
+         String dataName = sGetData;
+         JsonObject DataResult = JsonResponseRoot["dataResult"].to<JsonObject>();
+         JsonObject DataObject = DataResult[dataName + "Data"].to<JsonObject>();
          bool result;
          if (dataName == "config" && !isAdmin)
          {
@@ -284,7 +265,7 @@ void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *cli
       _lLastBroadcast = millis();
       if (std::move(buffer))
       {
-         serializeJson(jsonResponseDoc, (char *)buffer->data(),len);
+         serializeJson(jsonResponseDoc, (char *)buffer->data(), len);
          // log_d("wsBuffer to send: %s", (char *)wsBuffer->get());
          client->text(std::move(buffer));
       }
@@ -294,25 +275,13 @@ void WebHandlerClass::_WsEvent(AsyncWebSocket *server, AsyncWebSocketClient *cli
 bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, AsyncWebSocketClient *Client)
 {
    String ActionType = ActionObj["actionType"];
-   Serial.println(ActionType);
-
-   
-   if (RaceHandler.RaceState == RaceHandler.STARTING)
-      Serial.println("RaceHandler Race State STARTING");
-   if (RaceHandler.RaceState == RaceHandler.RESET)
-      Serial.println("RaceHandler Race State RESET");
-   if (RaceHandler.RaceState == RaceHandler.RUNNING)
-      Serial.println("RaceHandler Race State RUNNING");
-   if (RaceHandler.RaceState == RaceHandler.STOPPED)
-      Serial.println("RaceHandler Race State STOPPED");
-
+   String ActionData = ActionObj["actionData"];
    if (ActionType == "UpdateRace")
    {
       if (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET)
       {
          bUpdateRaceData = true;
-         bSendRaceData = true;
-         bUpdateLights = true;
+         bSendLightsAndRaceData = true;
          return true;
       }
       else
@@ -324,7 +293,6 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
    {
       if (RaceHandler.RaceState != RaceHandler.RESET)
       {
-         Serial.println("Race was not reset, stop and reset it first!");
          return false;
       }
       else
@@ -337,10 +305,8 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
    {
       if (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET)
       {
-         Serial.println("Race was already stopped!");
          bUpdateTimerWebUIdata = true;
-         bSendRaceData = true;
-         bUpdateLights = true;
+         bSendLightsAndRaceData = true;
          return false;
       }
       else
@@ -354,10 +320,8 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
    {
       if (RaceHandler.RaceState != RaceHandler.STOPPED)
       {
-         Serial.println("Race was not stopped, or already in RESET state.");
          bUpdateTimerWebUIdata = true;
-         bSendRaceData = true;
-         bUpdateLights = true;
+         bSendLightsAndRaceData = true;
          return false;
       }
       else
@@ -369,14 +333,11 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
    }
    else if (ActionType == "SetDogFault")
    {
-      if (!ActionObj.containsKey("actionData"))
+      if (ActionData == "null")
       {
-         // ReturnError = "No actionData found!";
          return false;
       }
       uint8_t iDogNum = ActionObj["actionData"]["dogNr"];
-      // bool bFaultState = ActionObj["actionData"]["faultState"];
-      // RaceHandler.SetDogFault(iDogNum, (bFaultState ? RaceHandler.ON : RaceHandler.OFF));
       RaceHandler.SetDogFault(iDogNum);
       return true;
    }
@@ -389,16 +350,14 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
       }
       _bIsConsumerArray[Client->id()] = true;
       bUpdateRaceData = true;
-      bSendRaceData = true;
-      bUpdateLights = true;
+      bSendLightsAndRaceData = true;
       return true;
    }
    else if (ActionType == "SetDogs4")
    {
       if (RaceHandler.RaceState != RaceHandler.RESET)
       {
-         bSendRaceData = true;
-         bUpdateLights = true;
+         bSendLightsAndRaceData = true;
          return false;
       }
       else
@@ -411,8 +370,7 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
    {
       if (RaceHandler.RaceState != RaceHandler.RESET)
       {
-         bSendRaceData = true;
-         bUpdateLights = true;
+         bSendLightsAndRaceData = true;
          return false;
       }
       else
@@ -425,8 +383,7 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
    {
       if (RaceHandler.RaceState != RaceHandler.RESET)
       {
-         bSendRaceData = true;
-         bUpdateLights = true;
+         bSendLightsAndRaceData = true;
          return false;
       }
       else
@@ -439,8 +396,7 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
    {
       if (RaceHandler.RaceState != RaceHandler.RESET)
       {
-         bSendRaceData = true;
-         bUpdateLights = true;
+         bSendLightsAndRaceData = true;
          return false;
       }
       else
@@ -451,13 +407,11 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
    }
    else if (ActionType == "SetRerunsOff")
    {
-      if (!ActionObj.containsKey("actionData") || (RaceHandler.RaceState != RaceHandler.RESET))
+      if ((ActionData == "null") || (RaceHandler.RaceState != RaceHandler.RESET))
       {
-         // ReturnError = "No actionData found!";
          return false;
       }
       bool _bRerunsOff = ActionObj["actionData"]["rerunsOff"];
-      // log_d("Received rerunsOff: %o", _bRerunsOff);
       if (_bRerunsOff)
          RaceHandler.ToggleRerunsOffOn(1);
       else
@@ -466,7 +420,6 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
    }
    else
    {
-      // ReturnError = "Unknown action received!";
       log_d("Unknown action received: %s", ActionType.c_str());
       return false;
    }
@@ -474,53 +427,24 @@ bool WebHandlerClass::_DoAction(JsonObject ActionObj, String *ReturnError, Async
 
 void WebHandlerClass::_SendLightsData(int8_t iClientId)
 {
-   bUpdateLights = false;
    stLightsState LightStates = LightsController.GetLightsState();
-   //log_d("Getting Lights state");
-   StaticJsonDocument<96> jsonLightsDoc;
+   JsonDocument jsonLightsDoc;
    JsonObject JsonRoot = jsonLightsDoc.to<JsonObject>();
 
-   JsonArray JsonLightsData = JsonRoot.createNestedArray("LightsData");
+   JsonArray JsonLightsData = JsonRoot["LightsData"].to<JsonArray>();
    copyArray(LightStates.State, JsonLightsData);
 
    size_t len = measureJson(jsonLightsDoc);
    std::shared_ptr<std::vector<uint8_t>> buffer;
    buffer = std::make_shared<std::vector<uint8_t>>(len);
-   
+
    if (std::move(buffer))
    {
-      serializeJson(jsonLightsDoc, (char *)buffer->data(),len);
-      //serializeJson(jsonLightsDoc, (char *)wsBuffer->get(), len + 1);
-      // log_d("LightsData wsBuffer to send: %s. No of ws clients is: %i", (char *)wsBuffer->get(), _ws->count());
+      serializeJson(jsonLightsDoc, (char *)buffer->data(), len);
       if (iClientId == -1)
-      {
          _ws->textAll(std::move(buffer));
-         /*uint8_t iId = 0;
-         for (auto &isConsumer : _bIsConsumerArray)
-         {
-            if (isConsumer)
-            {
-               // log_d("Getting client obj for id %i", iId);
-               AsyncWebSocketClient *client = _ws->client(iId);
-               if (client->queueIsFull())
-               {
-                  log_d("Deactivating consumer %i", iId);
-                  _ws->close(iId);
-                  _iNumOfConsumers--;
-                  _bIsConsumerArray[client->id()] = false;
-               }
-               else if (client && client->status() == WS_CONNECTED)
-               {
-                  // log_d("Generic Race Data update. Sending to client %i", iId);
-                  client->text(wsBuffer);
-               }
-            }
-            iId++;
-         }*/
-      }
       else
       {
-         // log_d("Specific update. Sending to client %i", iClientId);
          AsyncWebSocketClient *client = _ws->client(iClientId);
          client->text(std::move(buffer));
       }
@@ -536,9 +460,9 @@ void WebHandlerClass::_SendRaceData(int iRaceId, int8_t iClientId)
    }
    else
    {
-      StaticJsonDocument<bsRaceData> JsonRaceDataDoc;
+      JsonDocument JsonRaceDataDoc;
       JsonObject JsonRoot = JsonRaceDataDoc.to<JsonObject>();
-      JsonObject JsonRaceData = JsonRoot.createNestedObject("RaceData");
+      JsonObject JsonRaceData = JsonRoot["RaceData"].to<JsonObject>();
 
       if (bUpdateRaceData)
       {
@@ -566,11 +490,10 @@ void WebHandlerClass::_SendRaceData(int iRaceId, int8_t iClientId)
          bUpdateThisRaceDataField[rerunsOff] = false;
       }
 
-      JsonArray JsonDogDataArray = JsonRaceData.createNestedArray("dogData");
-      // Update dogs times, crossing/entry times and re-run info
+      JsonArray JsonDogDataArray = JsonRaceData["dogData"].to<JsonArray>();
       for (int i = 0; i < RaceHandler.iNumberOfRacingDogs; i++)
       {
-         JsonObject JsonDogData = JsonDogDataArray.createNestedObject();
+         JsonObject JsonDogData = JsonDogDataArray.add<JsonObject>();
          JsonDogData["dogNr"] = i;
          if (bUpdateThisRaceDataField[i + 4] || bUpdateTimerWebUIdata || bUpdateRaceData)
          {
@@ -587,11 +510,11 @@ void WebHandlerClass::_SendRaceData(int iRaceId, int8_t iClientId)
          }
          if (bUpdateThisRaceDataField[i] || bUpdateTimerWebUIdata || bUpdateRaceData)
          {
-            JsonArray JsonDogDataTimingArray = JsonDogData.createNestedArray("timing");
+            JsonArray JsonDogDataTimingArray = JsonDogData["timing"].to<JsonArray>();
             char cForJson[9];
             for (uint8_t i2 = 0; i2 <= RaceHandler.iDogRunCounters[i]; i2++)
             {
-               JsonObject DogTiming = JsonDogDataTimingArray.createNestedObject();
+               JsonObject DogTiming = JsonDogDataTimingArray.add<JsonObject>();
                RaceHandler.GetDogTime(i, i2).toCharArray(cForJson, 9);
                DogTiming["time"] = cForJson;
                RaceHandler.GetCrossingTime(i, i2).toCharArray(cForJson, 9);
@@ -608,34 +531,9 @@ void WebHandlerClass::_SendRaceData(int iRaceId, int8_t iClientId)
       buffer = std::make_shared<std::vector<uint8_t>>(len);
       if (std::move(buffer))
       {
-         serializeJson(JsonRaceDataDoc, (char *)buffer->data(),len);
-         // log_d("RaceData wsBuffer to send: %s", (char *)wsBuffer->get());
+         serializeJson(JsonRaceDataDoc, (char *)buffer->data(), len);
          if (iClientId == -1)
-         {
             _ws->textAll(std::move(buffer));
-            /*uint8_t iId = 0;
-            for (auto &isConsumer : _bIsConsumerArray)
-            {
-               if (isConsumer)
-               {
-                  // log_d("Getting client obj for id %i", iId);
-                  AsyncWebSocketClient *client = _ws->client(iId);
-                  if (client->queueIsFull())
-                  {
-                     log_d("Deactivating consumer %i", iId);
-                     _ws->close(iId);
-                     _iNumOfConsumers--;
-                     _bIsConsumerArray[client->id()] = false;
-                  }
-                  else if (client && client->status() == WS_CONNECTED)
-                  {
-                     // log_d("Generic Race Data update. Sending to client %i", iId);
-                     client->text(wsBuffer);
-                  }
-               }
-               iId++;
-            }*/
-         }
          else
          {
             // log_d("Specific update. Sending to client %i", iClientId);
@@ -673,8 +571,6 @@ bool WebHandlerClass::_ProcessConfig(JsonArray newConfig, String *ReturnError)
    {
       SettingsManager.saveSettings();
       bSendRaceData = true;
-      // Schedule system reboot to activate new settings in 5s
-      // SystemManager.scheduleReboot(millis() + 5000);
    }
 
    return true;
@@ -692,15 +588,14 @@ bool WebHandlerClass::_GetData(String dataType, JsonObject Data)
       Data["LaserOnTimer"] = SettingsManager.getSetting("LaserOnTimer");
       Data["Accuracy3digits"] = SettingsManager.getSetting("Accuracy3digits");
       Data["CommaInCsv"] = SettingsManager.getSetting("CommaInCsv");
-      // log_d("AdminPass: %s, RunDirection: %s", SettingsManager.getSetting("AdminPass").c_str(), SettingsManager.getSetting("RunDirectionInverted"));
    }
    else if (dataType == "triggerQueue")
    {
-      JsonArray triggerQueue = Data.createNestedArray("triggerQueue");
+      JsonArray triggerQueue = Data["triggerQueue"].to<JsonArray>();
 
       for (auto &trigger : RaceHandler._OutputTriggerQueue)
       {
-         JsonObject triggerObj = triggerQueue.createNestedObject();
+         JsonObject triggerObj = triggerQueue.add<JsonObject>();
          triggerObj["sensorNum"] = trigger.iSensorNumber;
          triggerObj["triggerTime"] = trigger.llTriggerTime - RaceHandler.llRaceStartTime;
          triggerObj["state"] = trigger.iSensorState;
@@ -728,17 +623,16 @@ void WebHandlerClass::_SendSystemData(int8_t iClientId)
       else
          _strRunDirection = (char *)"<-";
 
-      StaticJsonDocument<192> JsonSystemDataDoc;
+      JsonDocument JsonSystemDataDoc;
       JsonObject JsonRoot = JsonSystemDataDoc.to<JsonObject>();
 
-      JsonObject JsonSystemData = JsonRoot.createNestedObject("SystemData");
+      JsonObject JsonSystemData = JsonRoot["SystemData"].to<JsonObject>();
       JsonSystemData["ut"] = MICROS / 1000000;
       JsonSystemData["FW"] = (char *)FW_VER;
-      JsonSystemData["Tag"] = _iPwrOnTag;
       JsonSystemData["RID"] = RaceHandler.iCurrentRaceId + 1;
       JsonSystemData["clients"] = _ws->count();
       JsonSystemData["sTime"] = (char *)GPSHandler.GetUtcDateAndTime();
-      JsonSystemData["bat"] = 100;
+      JsonSystemData["bat"] = BatterySensor.GetBatteryPercentage();
       JsonSystemData["dir"] = _strRunDirection;
 
       size_t len = measureJson(JsonSystemDataDoc);
@@ -746,41 +640,15 @@ void WebHandlerClass::_SendSystemData(int8_t iClientId)
       buffer = std::make_shared<std::vector<uint8_t>>(len);
       if (std::move(buffer))
       {
-         serializeJson(JsonSystemDataDoc, (char *)buffer->data(),len);
+         serializeJson(JsonSystemDataDoc, (char *)buffer->data(), len);
          if (iClientId == -1)
-         {
             _ws->textAll(std::move(buffer));
-            /*uint8_t iId = 0;
-            for (auto &isConsumer : _bIsConsumerArray)
-            {
-               if (isConsumer)
-               {
-                  // log_d("Getting client obj for id %i", iId);
-                  AsyncWebSocketClient *client = _ws->client(iId);
-                  if (client->queueIsFull())
-                  {
-                     log_d("Deactivating consumer %i", iId);
-                     _ws->close(iId);
-                     _iNumOfConsumers--;
-                     _bIsConsumerArray[client->id()] = false;
-                  }
-                  else if (client && client->status() == WS_CONNECTED)
-                  {
-                     // log_d("Generic System Data update. Sending to client %i", iId);
-                     client->text(wsBuffer);
-                  }
-               }
-               iId++;
-            }*/
-         }
          else
          {
-            // log_d("Specific update. Sending to client %i", iClientId);
             AsyncWebSocketClient *client = _ws->client(iClientId);
             client->text(std::move(buffer));
          }
          _lLastSystemDataBroadcast = _lLastBroadcast = millis();
-         // log_d("Sent sysdata at %lu", millis());
       }
    }
 }
@@ -887,11 +755,14 @@ void WebHandlerClass::_onHome(AsyncWebServerRequest *request)
    }
    else
    {
+#ifndef WebUIonSDcard
       // Dump the byte array in PROGMEM with a 200 HTTP code (OK)
       AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", index_html_gz, index_html_gz_len);
       // Tell the browswer the contemnt is Gzipped
       response->addHeader("Content-Encoding", "gzip");
-
+#else
+      AsyncWebServerResponse *response = request->beginResponse(SD_MMC, "/index.htm", "text/html");
+#endif
       // And set the last-modified datetime so we can check if we need to send it again next time or not
       response->addHeader("Last-Modified", _last_modified);
       request->send(response);
@@ -906,12 +777,70 @@ void WebHandlerClass::_onFavicon(AsyncWebServerRequest *request)
    }
    else
    {
+#ifndef WebUIonSDcard
       AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", index_html_gz, index_html_gz_len);
       response->addHeader("Content-Encoding", "gzip");
-
+#else
+      AsyncWebServerResponse *response = request->beginResponse(SD_MMC, "/favicon.ico", "image/png");
+#endif
       // And set the last-modified datetime so we can check if we need to send it again next time or not
       response->addHeader("Last-Modified", _last_modified);
       request->send(response);
+   }
+}
+
+void WebHandlerClass::handleDoUpdate(AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len, bool final)
+{
+   if (!index)
+   {
+      Serial.println("\nFirmware update initiated.");
+      bFwUpdateInProgress = true;
+      LCDController.FirmwareUpdateInit();
+      content_len = request->contentLength();
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH))
+         Update.printError(Serial);
+   }
+
+   if (Update.write(data, len) != len)
+      Update.printError(Serial);
+
+   if (final)
+   {
+      AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", "Ok");
+      response->addHeader("Refresh", "30");
+      response->addHeader("Location", "/update");
+      request->send(response);
+      if (!Update.end(true))
+      {
+         LCDController.FirmwareUpdateError();
+         bFwUpdateInProgress = false;
+         Update.printError(Serial);
+         vTaskDelay(2000);
+         ESP.restart();
+      }
+      else
+      {
+         LCDController.FirmwareUpdateSuccess();
+         bFwUpdateInProgress = false;
+         Serial.println("\nUpdate completed.\r\n");
+         Serial.flush();
+         vTaskDelay(2000);
+         ESP.restart();
+      }
+   }
+}
+
+void WebHandlerClass::printProgress(size_t prg, size_t sz)
+{
+   uint16_t iProgressPercentage = (prg * 100) / content_len;
+   if (uiLastProgress != iProgressPercentage)
+   {
+      Serial.printf("Progress: %u%%\r", iProgressPercentage);
+      String sProgressPercentage = String(iProgressPercentage);
+      while (sProgressPercentage.length() < 3)
+         sProgressPercentage = " " + sProgressPercentage;
+      LCDController.FirmwareUpdateProgress(sProgressPercentage);
+      uiLastProgress = iProgressPercentage;
    }
 }
 
