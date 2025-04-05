@@ -13,9 +13,8 @@ export class BatteryStatePipe implements PipeTransform {
         returnString = "LOW";
     } else if (value == 9999) {
         returnString = "!!!";
-    } else {
+    } else
         returnString = value.toString() + "%";
-    }
 
     return returnString;
   }

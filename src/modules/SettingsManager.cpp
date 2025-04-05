@@ -21,13 +21,13 @@ void SettingsManagerClass::init()
    _settings_save = false;
 
    Embedis::dictionary(
-      F("EEPROM"),
-      SPI_FLASH_SEC_SIZE,
-      [](size_t pos) -> char
-      { return EEPROM.read(pos); },
-      [](size_t pos, char value)
-      { EEPROM.write(pos, value); },
-      []() {});
+       F("EEPROM"),
+       SPI_FLASH_SEC_SIZE,
+       [](size_t pos) -> char
+       { return EEPROM.read(pos); },
+       [](size_t pos, char value)
+       { EEPROM.write(pos, value); },
+       []() {});
 
    setDefaultSettings();
 }
@@ -97,7 +97,7 @@ void SettingsManagerClass::setDefaultSettings()
 
    if (!hasSetting("LaserOnTimer"))
    {
-      setSetting("LaserOnTimer", String("180"));
+      setSetting("LaserOnTimer", String("60"));
       saveSettings();
    }
 

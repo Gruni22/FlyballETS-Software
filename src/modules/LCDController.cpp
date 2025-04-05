@@ -20,7 +20,7 @@
 #include "LCDController.h"
 
 /// <summary>
-///   Initialises LCD.
+///   Initialises this object.
 /// </summary>
 ///
 /// <param name="Clcd1">   [in,out] Pointer to first LCD object. </param>
@@ -35,40 +35,6 @@ void LCDControllerClass::init(LiquidCrystal *Clcd1, LiquidCrystal *Clcd2)
    _Clcd2->begin(40, 2);
    _Clcd2->clear();
 
-   _DisplayInit();
-}
-
-/// <summary>
-///   Initialises i2c LCD.
-/// </summary>
-///
-/// <param name="Ilcd1">   [in,out] Pointer to first i2c LCD object. </param>
-/// <param name="Ilcd2">   [in,out] Pointer to second i2c LCD object. </param>
-void LCDControllerClass::initI2C()
-{
-   // Define i2c LCD (connected using PFC8574A)
-   LiquidCrystal_PCF8574 lcd1_i2c(0x20, 0, 2, 4, 5, 6, 7);  // set the LCD address to 0x20
-   LiquidCrystal_PCF8574 lcd2_i2c(0x20, 0, 1, 4, 5, 6, 7);  // set the LCD address to 0x20 
-   
-   // Initialize i2c LCD
-   lcd1_i2c.begin(40, 2);
-   lcd1_i2c.clear();
-   lcd1_i2c.setCursor(0, 0);
-   lcd1_i2c.print("Test vLCD1 Linia 1");
-   lcd1_i2c.setCursor(0, 1);
-   lcd1_i2c.print("Test vLCD1 Linia 2");
-
-   lcd2_i2c.begin(40, 2);
-   lcd2_i2c.clear();
-   lcd2_i2c.setCursor(0, 0);
-   lcd2_i2c.print("Test vLCD2 Linia 3");
-   lcd2_i2c.setCursor(0, 1);
-   lcd2_i2c.print("Test vLCD2 Linia 4");
-   vTaskDelay(1000);
-}
-
-void LCDControllerClass::_DisplayInit()
-{
    // Put initial text on screen
    //                                  1         2         3
    // LCD layout:            0123456789012345678901234567890123456789
@@ -79,7 +45,7 @@ void LCDControllerClass::_DisplayInit()
    _UpdateLCD(1, 0, String("1:   0.000  +  0.000    |   WELCOME  000"), 40);
    _UpdateLCD(2, 0, String("2:   0.000  +  0.000    | Team:    0.000"), 40);
    _UpdateLCD(3, 0, String("3:   0.000  +  0.000    |   CT:    0.000"), 40);
-   _UpdateLCD(4, 0, String("4:   0.000  +  0.000    |  UNK% W G sd >"), 40);
+   _UpdateLCD(4, 0, String("4:   0.000  +  0.000    |  100% W G sd >"), 40);
 
    _SlcdfieldFields[D1Time] = {true, 1, 3, 7, String("  0.000")};
    _SlcdfieldFields[D2Time] = {true, 2, 3, 7, String("  0.000")};
@@ -97,11 +63,6 @@ void LCDControllerClass::_DisplayInit()
    _SlcdfieldFields[CleanTime] = {true, 3, 33, 7, String("  0.000")};
    _SlcdfieldFields[RaceState] = {true, 1, 28, 7, String(" READY ")};
    _SlcdfieldFields[RaceID] = {true, 1, 37, 3, String("  1")};
-#if BatteryCalibration
-   _SlcdfieldFields[BattLevel] = {true, 4, 27, 4, String("0000")};
-#else
-   _SlcdfieldFields[BattLevel] = {true, 4, 27, 3, String("UNK")};
-#endif
    _SlcdfieldFields[WifiState] = {true, 4, 32, 1, String("W")};
    _SlcdfieldFields[GpsState] = {true, 4, 34, 1, String(" ")};
    _SlcdfieldFields[SDcardState] = {true, 4, 36, 2, String("  ")};
@@ -126,6 +87,8 @@ void LCDControllerClass::Main()
       uint8_t iLoopCounter = 0;
       for (const SLCDField &lcdField : _SlcdfieldFields)
       {
+         //log_v("lcdField: %i, UpdateFlag: %i", iLoopCounter, lcdField.bUpdateFlag);
+         // Trigger update only for fields with UpdateFlag set
          if (lcdField.bUpdateFlag)
          {
             _UpdateLCD(lcdField.iLine, lcdField.iStartingPosition, lcdField.strText, lcdField.iFieldLength);
@@ -148,6 +111,7 @@ void LCDControllerClass::UpdateField(LCDFields lcdfieldField, String strNewValue
 {
    if (_SlcdfieldFields[lcdfieldField].iFieldLength < strNewValue.length())
    {
+      // The new value will not fit into the new field!
       log_e("[LCD Controller] Field (%i) has %i characters. Received string '%s' has %i characters",
             lcdfieldField, _SlcdfieldFields[lcdfieldField].iFieldLength, strNewValue.c_str(), strNewValue.length());
       return;
@@ -164,48 +128,42 @@ void LCDControllerClass::UpdateField(LCDFields lcdfieldField, String strNewValue
 /// <param name="iPosition">     Zero-based index of the starting position of the text which should be put on the screen. </param>
 /// <param name="strText">       The text which should be put at the given position. </param>
 /// <param name="iFieldLength">  Length of the field, if the given text is longer than this value, the text will be made scrolling within the given field length. </param>
-void LCDControllerClass::_UpdateLCD(uint8_t iLine, uint8_t iPosition, String strText, int iFieldLength)
+void LCDControllerClass::_UpdateLCD(int iLine, int iPosition, String strText, int iFieldLength)
 {
    LiquidCrystal *CActiveLCD = 0;
-#ifdef I2C_ACTIVE
-   LiquidCrystal_PCF8574 *IActiveLCD = 0;
-#endif
    if (iLine > 2)
    {
+      // DisplayLine is higher than 2, this means we need to update the 2nd LCD
       CActiveLCD = _Clcd2;
-   #ifdef I2C_ACTIVE
-      IActiveLCD = &lcd2_i2c;
-   #endif
-      iLine = iLine - 2;
+      iLine = iLine - 2; // Convert line number to correct line number for 2nd display
    }
    else
    {
       CActiveLCD = _Clcd1;
-   #ifdef I2C_ACTIVE
-      IActiveLCD = &lcd1_i2c;
-   #endif
    }
+   /* Since this function is user friendly and uses diplay lines 1-4, we have to convert this number
+      to a real display line (0-1) by substracting 1 again
+   */
+   iLine = iLine - 1;
 
-   iLine--;
-
+   // Check how long strMessage is:
    int iMessageLength = strText.length();
    if (iMessageLength > iFieldLength)
    {
+      // Message is too long, make it scroll!
       int iExtraChars = iMessageLength - (iFieldLength - 1);
       for (int i = 0; i < iExtraChars; i++)
       {
          String strMessageSubString = strText.substring(i, i + iFieldLength);
          CActiveLCD->setCursor(iPosition, iLine);
          CActiveLCD->print(strMessageSubString);
-      #ifdef I2C_ACTIVE
-         IActiveLCD->setCursor(iPosition, iLine);
-         IActiveLCD->print(strMessageSubString);
-      #endif
       }
       return;
    }
    else if (iMessageLength < iFieldLength)
    {
+      // Message is too short, we need to pad it
+      // First find missing characters
       int iMissingChars = iFieldLength - iMessageLength;
       for (int i = 0; i < iMissingChars; i++)
       {
@@ -214,16 +172,11 @@ void LCDControllerClass::_UpdateLCD(uint8_t iLine, uint8_t iPosition, String str
    }
    CActiveLCD->setCursor(iPosition, iLine);
    CActiveLCD->print(strText);
-#ifdef I2C_ACTIVE
-   lcd1_i2c.setCursor(iPosition, iLine);
-   Serial.println("Printing line");
-   lcd1_i2c.print(strText);
-   Serial.println("Printing done");
-#endif
 }
 
 void LCDControllerClass::_HandleLCDUpdates()
 {
+   // Update team clean time
    if (bUpdateThisLCDField[CleanTime] || bUpdateTimerLCDdata)
    {
       String sReadCleanTime = RaceHandler.GetCleanTime();
@@ -231,6 +184,7 @@ void LCDControllerClass::_HandleLCDUpdates()
       bUpdateThisLCDField[CleanTime] = false;
       log_v("LCD CleanTime updated with string '%s'", sReadCleanTime.c_str());
    }
+   // Update team time
    if (bUpdateThisLCDField[TeamTime] || bUpdateTimerLCDdata)
    {
       String sReadRaceTime = RaceHandler.GetRaceTime();
@@ -238,6 +192,7 @@ void LCDControllerClass::_HandleLCDUpdates()
       bUpdateThisLCDField[TeamTime] = false;
       log_v("LCD TeamTime updated with string '%s'", sReadRaceTime.c_str());
    }
+  // Update dogs times, crossing/entry times and re-run info
    for (int i = 0; i < RaceHandler.iNumberOfRacingDogs; i++)
    {
       int iRunNumber;
@@ -245,7 +200,7 @@ void LCDControllerClass::_HandleLCDUpdates()
          iRunNumber = RaceHandler.SelectRunNumber(i);
       else
          iRunNumber = 0;
-
+      
       if (bUpdateThisLCDField[i] || bUpdateTimerLCDdata || (RaceHandler.iDogRunCounters[i] > 0 && !RaceHandler.bRerunsOff))
       {
          String sReadDogTime = RaceHandler.GetDogTime(i, iRunNumber);
@@ -276,63 +231,19 @@ void LCDControllerClass::_HandleLCDUpdates()
       for (uint8_t i = 14; i < 21; i++)
          _SlcdfieldFields[i].bUpdateFlag = true;
    }
-
-   if (_bCriticalBattery)
-   {
-      _UpdateLCD(1, 0, String("    BATTERY level critically LOW !!!    "), 40);
-      _UpdateLCD(2, 0, String("                                        "), 40);
-      _UpdateLCD(3, 0, String("  Turn ETS off and charge the battery!  "), 40);
-      _UpdateLCD(4, 0, String("                                        "), 40);
-      LightsController.bExecuteResetLights = true;
-      vTaskDelay(3000);
-      esp_deep_sleep_start();
-   }
-   // Update battery percentage
-   else if ((millis() < 2000 || ((millis() - llLastBatteryLCDupdate) > 30000)) //
-            && (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET))
-   {
-      uint16_t iBatteryPercentage = BatterySensor.GetBatteryPercentage();
-      String sBatteryPercentage;
-      if (iBatteryPercentage == 9999)
-      {
-         sBatteryPercentage = "!!!";
-         UpdateField(BattLevel, sBatteryPercentage);
-         _bCriticalBattery = true;
-      }
-      else if (iBatteryPercentage == 9911)
-         sBatteryPercentage = "USB";
-      else if (iBatteryPercentage == 0)
-         sBatteryPercentage = "LOW";
-      else
-         sBatteryPercentage = String(iBatteryPercentage);
-
-      while (sBatteryPercentage.length() < 3)
-         sBatteryPercentage = " " + sBatteryPercentage;
-      UpdateField(BattLevel, sBatteryPercentage);
-      llLastBatteryLCDupdate = millis();
-   }
 }
 
-void LCDControllerClass::DisplayReInit()
+void LCDControllerClass::reInit()
 {
    _UpdateLCD(1, 0, String("                                        "), 40);
    _UpdateLCD(2, 0, String("                 mode:                  "), 40);
    _UpdateLCD(3, 0, String("                                        "), 40);
    _UpdateLCD(4, 0, String("                                        "), 40);
-   if (!LightsController.bModeNAFA)
-   {
-      _UpdateLCD(3, 0, String("                  FCI                   "), 40);
-      vTaskDelay(500);
-   }
-   else
-   {
-      _UpdateLCD(3, 0, String("                 NAFA                   "), 40);
-      vTaskDelay(500);
-   }
+   vTaskDelay(500);
    _UpdateLCD(1, 0, String("1:                      |               "), 40);
    _UpdateLCD(2, 0, String("2:                      | Team:         "), 40);
    _UpdateLCD(3, 0, String("3:                      |   CT:         "), 40);
-   _UpdateLCD(4, 0, String("4:                      |     %         "), 40);
+   _UpdateLCD(4, 0, String("4:                      |               "), 40);
    bUpdateNonTimerLCDdata = true;
    bUpdateTimerLCDdata = true;
    bExecuteLCDUpdate = true;
@@ -345,7 +256,7 @@ void LCDControllerClass::UpdateNumberOfDogsOnLCD(uint8_t iNumberOfDogs)
       _UpdateLCD(1, 0, String("1:                      |               "), 40);
       _UpdateLCD(2, 0, String("2:                      | Team:         "), 40);
       _UpdateLCD(3, 0, String("3:                      |   CT:         "), 40);
-      _UpdateLCD(4, 0, String("                        |     %         "), 40);
+      _UpdateLCD(4, 0, String("                        |               "), 40);
       _SlcdfieldFields[D4Time].strText = "       ";
       _SlcdfieldFields[D4RerunInfo].strText = "  ";
    }
@@ -354,7 +265,7 @@ void LCDControllerClass::UpdateNumberOfDogsOnLCD(uint8_t iNumberOfDogs)
       _UpdateLCD(1, 0, String("1:                      |               "), 40);
       _UpdateLCD(2, 0, String("2:                      | Team:         "), 40);
       _UpdateLCD(3, 0, String("                        |   CT:         "), 40);
-      _UpdateLCD(4, 0, String("                        |     %         "), 40);
+      _UpdateLCD(4, 0, String("                        |               "), 40);
       _SlcdfieldFields[D3Time].strText = "       ";
       _SlcdfieldFields[D4Time].strText = "       ";
       _SlcdfieldFields[D3RerunInfo].strText = "  ";
@@ -365,7 +276,7 @@ void LCDControllerClass::UpdateNumberOfDogsOnLCD(uint8_t iNumberOfDogs)
       _UpdateLCD(1, 0, String("1:                      |               "), 40);
       _UpdateLCD(2, 0, String("                        | Team:         "), 40);
       _UpdateLCD(3, 0, String("                        |   CT:         "), 40);
-      _UpdateLCD(4, 0, String("                        |     %         "), 40);
+      _UpdateLCD(4, 0, String("                        |               "), 40);
       _SlcdfieldFields[D2Time].strText = "       ";
       _SlcdfieldFields[D3Time].strText = "       ";
       _SlcdfieldFields[D4Time].strText = "       ";
@@ -378,7 +289,7 @@ void LCDControllerClass::UpdateNumberOfDogsOnLCD(uint8_t iNumberOfDogs)
       _UpdateLCD(1, 0, String("1:                      |               "), 40);
       _UpdateLCD(2, 0, String("2:                      | Team:         "), 40);
       _UpdateLCD(3, 0, String("3:                      |   CT:         "), 40);
-      _UpdateLCD(4, 0, String("4:                      |     %         "), 40);
+      _UpdateLCD(4, 0, String("4:                      |               "), 40);
    }
    bUpdateNonTimerLCDdata = true;
    bUpdateTimerLCDdata = true;
@@ -401,12 +312,12 @@ void LCDControllerClass::FirmwareUpdateProgress(String strNewValue)
 
 void LCDControllerClass::FirmwareUpdateSuccess()
 {
-   _UpdateLCD(4, 0, String("           FW Update Success            "), 40);
+   _UpdateLCD(4, 0, String("              OTA Success               "), 40);
 }
 
 void LCDControllerClass::FirmwareUpdateError()
 {
-   _UpdateLCD(4, 0, String("            FW Update ERROR             "), 40);
+   _UpdateLCD(4, 0, String("              OTA Error                 "), 40);
 }
 
 /// <summary>

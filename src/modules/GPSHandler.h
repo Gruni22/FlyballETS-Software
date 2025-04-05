@@ -12,9 +12,9 @@ class GPSHandlerClass
 {
 private:
    bool _bGSPconnected = false;
-   int _iCompilationYear;
 
 protected:
+   HardwareSerial *_SerialPort;
    TinyGPSPlus _Tgps;
    void _HandleSerialPort();
    void _FormatTime();

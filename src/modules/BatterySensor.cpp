@@ -48,14 +48,7 @@ void BatterySensorClass::CheckBatteryVoltage()
          iBatteryReadingsTotal = iBatteryReadingsTotal + _iBatteryReadings[i];
       }
       _iAverageBatteryReading = iBatteryReadingsTotal / _iNumberOfBatteryReadings;
-
-      //First calculate voltage at ADC pin
-      //int iPinVoltage = map(_iAverageBatteryReading, 958, 4095, 916, 3150);
-      double dPinVoltage = (-0.00012493) * pow(_iAverageBatteryReading, 2) + 1.4559 * _iAverageBatteryReading - 671.7;
-      int iPinVoltage = dPinVoltage;
-      _iBatteryVoltage = iPinVoltage * 4.3172;
       _iNumberOfBatteryReadings = 0;
-      //log_d("_iBatteryVoltage: %i", _iBatteryVoltage);
    }
 }
 
@@ -76,33 +69,14 @@ uint16_t BatterySensorClass::GetBatteryVoltage()
 ///   Assumed working range is 10.5V - 12.3V what is save for 3S2P and 3S4P li-ion batteries
 
 /// </summary>
+///
+/// <returns>
+///   The battery percentage or analog pin read.
+/// </returns>
 uint16_t BatterySensorClass::GetBatteryPercentage()
 {
-#if BatteryCalibration
-   return _iAverageBatteryReading;
-#else
-   if (_iBatteryVoltage < 5000 || _iBatteryVoltage >= 60000)
-   {
-      return 9911;
-   }
-   else if (_iBatteryVoltage >= 5000 && _iBatteryVoltage < 10000)
-   {
-      return 9999;
-   }
-   else if (_iBatteryVoltage >= 10000 && _iBatteryVoltage < 10500)
-   {
-      return 0;
-   }
-   else if (_iBatteryVoltage > 12250 && _iBatteryVoltage < 60000)
-   {
-      return 100;
-   }
-   else
-   {
-      uint16_t iBatteryPercentage = map(_iBatteryVoltage, 10500, 12250, 1, 100);
-      return iBatteryPercentage;
-   }
-#endif
+   uint16_t iBatteryPercentage = map(constrain(_iBatteryVoltage, 960, 1260), 960, 1260, 0, 100);
+   return iBatteryPercentage;
 }
 
 /// <summary>

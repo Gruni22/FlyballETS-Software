@@ -23,11 +23,8 @@
 // see <http://www.gnu.org/licenses/>
 #include "main.h"
 
-// Declare WS2811B compatibile lights strip
-NeoPixelBus<NeoRgbFeature, WS_METHOD> LightsStrip(5 * LIGHTSCHAINS, iLightsDataPin);
-
 // Declare 40x4 LCD by 2 virtual LCDes
-LiquidCrystal lcd1(iLCDRSPin, iLCDE1Pin, iLCDData4Pin, iLCDData5Pin, iLCDData6Pin, iLCDData7Pin);  // this will be line 1&2 of 40x4 LCD
+LiquidCrystal lcd(iLCDRSPin, iLCDE1Pin, iLCDData4Pin, iLCDData5Pin, iLCDData6Pin, iLCDData7Pin);  // this will be line 1&2 of 40x4 LCD
 LiquidCrystal lcd2(iLCDRSPin, iLCDE2Pin, iLCDData4Pin, iLCDData5Pin, iLCDData6Pin, iLCDData7Pin); // this will be line 3&4 of 40x4 LCD
 
 // IP addresses declaration
@@ -40,6 +37,7 @@ static portMUX_TYPE spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 void setup()
 {
+   EEPROM.begin(EEPROM_SIZE);
    Serial.begin(115200);
    SettingsManager.init();
 
@@ -48,18 +46,11 @@ void setup()
    pinMode(iS2Pin, INPUT_PULLDOWN);
 
    // Initialize lights
-   pinMode(iLightsDataPin, OUTPUT);
+   pinMode(iDataPin, OUTPUT);
 
-   // Configure pins for shift register
+   // Configure pins for 74HC166
    pinMode(iLatchPin, OUTPUT);
    pinMode(iClockPin, OUTPUT);
-   pinMode(iDataInPin, INPUT_PULLDOWN);
-
-   // Configure pins for SD Card
-   pinMode(iSDdata0Pin, INPUT_PULLUP);
-   pinMode(iSDdata1Pin, INPUT_PULLUP);
-   pinMode(iSDcmdPin, INPUT_PULLUP);
-   pinMode(iSDdetectPin, INPUT_PULLUP);
 
    // Configure LCD pins
    pinMode(iLCDData4Pin, OUTPUT);
@@ -76,18 +67,8 @@ void setup()
    attachInterrupt(digitalPinToInterrupt(iS2Pin), Sensor2Wrapper, CHANGE);
 #endif
 
-   // Configure Laser output pin
-   pinMode(iLaserOutputPin, OUTPUT);
-
-   // Configure GPS PPS pin
-   pinMode(iGPSppsPin, INPUT_PULLDOWN);
-
    // Print SW version
    Serial.printf("Firmware version: %s\r\n", FW_VER);
-   Serial.printf("FW compilation date: %s\r\n",__DATE__);
-
-   // Initialize BatterySensor class with correct pin
-   BatterySensor.init(iBatterySensorPin);
 
    // Initialize LightsController class
    xTaskCreatePinnedToCore(
@@ -100,18 +81,17 @@ void setup()
       1);
 
    // Initialize LCDController class with lcd1 and lcd2 objects
-   LCDController.init(&lcd1, &lcd2);
+   LCDController.init(&lcd, &lcd2);
+   /*xTaskCreatePinnedToCore(
+      Core1LCD,
+      "LCD",
+      8192,
+      NULL,
+      1,
+      &taskLCD,
+      1);*/
 
    strSerialData[0] = 0;
-
-   // Initialize GPS
-   GPSHandler.init(iGPSrxPin, iGPStxPin);
-   
-   // SD card init
-   if (digitalRead(iSDdetectPin) == LOW)
-      SDcardController.init();
-   else
-      Serial.println("SD Card not inserted!");
 
    // Initialize RaceHandler class with S1 and S2 pins
    xTaskCreatePinnedToCore(
@@ -123,58 +103,84 @@ void setup()
       &taskRace,
       1);
 
-#ifdef WiFiON
    // Setup AP
    WiFi.onEvent(WiFiEvent);
-   WiFi.mode(WIFI_MODE_AP);
+   WiFi.mode(WIFI_AP);
    String strAPName = SettingsManager.getSetting("APName");
    String strAPPass = SettingsManager.getSetting("APPass");
    if (!WiFi.softAP(strAPName.c_str(), strAPPass.c_str()))
       log_e("Error initializing softAP!");
    else
       log_i("Wifi started successfully, AP name: %s, pass: %s", strAPName.c_str(), strAPPass.c_str());
+   WiFi.softAPConfig(IPGateway, IPGateway, IPSubnet);
 
    // configure webserver
    WebHandler.init(80);
-   mdnsServerSetup();
-#endif
 
-   iLaserOnTime = atoi(SettingsManager.getSetting("LaserOnTimer").c_str());
-   log_i("Configured laser ON time: %is", iLaserOnTime);
+   // OTA setup
+   ArduinoOTA.setPassword(strAPPass.c_str());
+   ArduinoOTA.setPort(3232);
+   ArduinoOTA.onStart([](){
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+         type = "Firmware";
+      else // U_SPIFFS
+         type = "Filesystem";
+      Serial.println("\n" + type + " update initiated.");
+      LCDController.FirmwareUpdateInit(); });
+   ArduinoOTA.onEnd([](){ 
+      Serial.println("\nUpdate completed.\r\n");
+      LCDController.FirmwareUpdateSuccess(); });
+   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total){
+      uint16_t iProgressPercentage = (progress / (total / 100));
+      if (uiLastProgress != iProgressPercentage)
+      {
+         Serial.printf("Progress: %u%%\r", iProgressPercentage);
+         String sProgressPercentage = String(iProgressPercentage);
+         while (sProgressPercentage.length() < 3)
+            sProgressPercentage = " " + sProgressPercentage;
+         LCDController.FirmwareUpdateProgress(sProgressPercentage);
+         uiLastProgress = iProgressPercentage;
+      } });
+   ArduinoOTA.onError([](ota_error_t error){
+      Serial.printf("Error[%u]: ", error);
+      LCDController.FirmwareUpdateError();
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed"); });
+   ArduinoOTA.begin();
+   mdnsServerSetup();
+   // log_i("Setup running on core %d", xPortGetCoreID());
 
    log_w("ESP log level %i", CORE_DEBUG_LEVEL);
 }
 
 void loop()
 {
-   if (!WebHandler.bFwUpdateInProgress)
+   // Exclude handling of those services in loop while race is running
+   if (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET)
    {
-      if (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET)
-      {
-         SettingsManager.loop();
-         GPSHandler.loop();
-         BatterySensor.CheckBatteryVoltage();
-         SDcardController.CheckSDcardSlot(iSDdetectPin);
-      }
+      // Handle settings manager loop
+      SettingsManager.loop();
 
-      serialEvent();
-
-      if (bSerialStringComplete)
-         HandleSerialCommands();
-
-      HandleRemoteAndButtons();
-   }
-   else
-   {
-      vTaskSuspend(taskRace);
-      vTaskSuspend(taskLights);
+      // Handle OTA update if incoming
+      ArduinoOTA.handle();
    }
 
+   // Check for serial events
+   serialEvent();
+   // Handle serial console commands
+
+   if (bSerialStringComplete)
+      HandleSerialCommands();
+
+   // Handle LCD processing
    LCDController.Main();
 
-#ifdef WiFiON
+   // Handle WebSocket server
    WebHandler.loop();
-#endif
 }
 
 void serialEvent()
@@ -182,15 +188,17 @@ void serialEvent()
    // Listen on serial port
    while (Serial.available() > 0)
    {
-      char cInChar = Serial.read();
+      char cInChar = Serial.read(); // Read a character
+                                    // Check if buffer contains complete serial message, terminated by newline (\n)
       if (cInChar == '\n')
       {
+         // Serial message in buffer is complete, null terminate it and store it for further handling
          bSerialStringComplete = true;
          log_d("SERIAL received: '%s'", strSerialData.c_str());
-         strSerialData += '\0';
+         strSerialData += '\0'; // Null terminate the string
          break;
       }
-      strSerialData += cInChar;
+      strSerialData += cInChar; // Store it
    }
 }
 
@@ -217,10 +225,7 @@ void StartRaceMain()
 {
    if (RaceHandler.RaceState != RaceHandler.RESET)
       return;
-   if (LightsController.bModeNAFA)
-      LightsController.WarningStartSequence();
-   else
-      LightsController.InitiateStartSequence();
+   LightsController.InitiateStartSequence();
 }
 
 /// <summary>
@@ -241,7 +246,7 @@ void StartStopRace()
 {
    if (RaceHandler.RaceState == RaceHandler.RESET)
       StartRaceMain();
-   else
+   else // If race state is running or starting, we should stop it
       StopRaceMain();
 }
 
@@ -250,18 +255,19 @@ void StartStopRace()
 /// </summary>
 void ResetRace()
 {
-   if (RaceHandler.RaceState != RaceHandler.STOPPED)
+   if (RaceHandler.RaceState != RaceHandler.STOPPED) // Only allow reset when race is stopped first
       return;
    RaceHandler.bExecuteResetRace = true;
    LightsController.bExecuteResetLights = true;
 }
 
-#ifdef WiFiON
 void WiFiEvent(arduino_event_id_t event)
 {
+   // Serial.printf("Wifi event %i\r\n", event);
    switch (event)
    {
    case ARDUINO_EVENT_WIFI_AP_START:
+      // log_i("AP Started");
       WiFi.softAPConfig(IPGateway, IPGateway, IPSubnet);
       if (WiFi.softAPIP() != IPGateway)
       {
@@ -272,12 +278,17 @@ void WiFiEvent(arduino_event_id_t event)
       break;
 
    case ARDUINO_EVENT_WIFI_AP_STOP:
+      // log_i("AP Stopped");
       break;
 
    case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
+      // log_i("IP assigned to new client");
       break;
 
    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      // bCheckWsClinetStatus = true;
+      // ipTocheck = IPAddress (192,168,20,2);
+      // log_i("IP to check: %s", ipTocheck.toString().c_str());
       break;
 
    default:
@@ -305,14 +316,10 @@ void ToggleWifi()
 
 void mdnsServerSetup()
 {
-   if (!MDNS.begin("flyballets")) {
-      Serial.println("Error setting up MDNS responder!");
-      return;
-   }
-   log_i("mDNS responder started");
    MDNS.addService("http", "tcp", 80);
+   MDNS.addServiceTxt("arduino", "tcp", "app_version", APP_VER);
+   MDNS.begin("flyballets");
 }
-#endif
 
 void HandleSerialCommands()
 {
@@ -339,19 +346,11 @@ void HandleSerialCommands()
       uint16_t h = t;
       log_i("Up time: %i:%i:%i", h, m, s);
    }
-   // Delete tag file
-   if (strSerialData == "deltagfile")
-      SDcardController.deleteFile(SD_MMC, "/tag.txt");
-   // List files on SD card
-   if (strSerialData == "list")
-   {
-      SDcardController.listDir(SD_MMC, "/", 0);
-      SDcardController.listDir(SD_MMC, "/SENSORS_DATA", 0);
-   }
+
    // Reboot ESP32
    if (strSerialData == "reboot")
       ESP.restart();
-   // Prepare for automatic tests
+   // Prepare for automatic tests (used by testETS.py script)
    if (strSerialData == "preparefortesting")
       if (!Simulate)
          log_e("FAILED - Firmware's not compiled in Simulation mode");
@@ -364,6 +363,7 @@ void HandleSerialCommands()
          log_i("DONE - Simulation mode active. Accuracy set to 3. Run direction: normal.");
       }
 #if Simulate
+   // Change Race ID (only serial command), e.g. race 1 or race 2
    if (strSerialData.startsWith("race"))
    {
       strSerialData.remove(0, 5);
@@ -372,6 +372,7 @@ void HandleSerialCommands()
       {
          Simulator.iSimulatedRaceID = 0;
       }
+      // Simulator.ChangeSimulatedRaceID(iSimulatedRaceID);
       Simulator.bExecuteSimRaceChange = true;
    }
 #endif
@@ -405,11 +406,6 @@ void HandleSerialCommands()
    if (strSerialData == "accuracy")
       RaceHandler.ToggleAccuracy();
    // Toggle decimal separator in CSV
-   if (strSerialData == "separator")
-      SDcardController.ToggleDecimalSeparator();
-   // Toggle between modes
-   if (strSerialData == "mode")
-      LightsController.ToggleStartingSequence();
    // Reruns off
    if (strSerialData == "reruns off")
       RaceHandler.ToggleRerunsOffOn(1);
@@ -422,9 +418,6 @@ void HandleSerialCommands()
    // Toggle wifi on/off
    if (strSerialData == "fwver")
       Serial.printf("Firmware version: %s\r\n", FW_VER);
-   // Factory Reset
-   if (strSerialData == "factoryreset")
-      FactoryReset();
 
    // Make sure this stays last in the function!
    if (strSerialData.length() > 0)
@@ -433,117 +426,6 @@ void HandleSerialCommands()
       bSerialStringComplete = false;
    }
 }
-
-void HandleRemoteAndButtons()
-{
-   byDataIn = 0;
-   digitalWrite(iLatchPin, LOW);
-   digitalWrite(iClockPin, LOW);
-   digitalWrite(iClockPin, HIGH);
-   digitalWrite(iLatchPin, HIGH);
-   for (uint8_t i = 0; i < 8; ++i)
-   {
-      byDataIn |= digitalRead(iDataInPin) << (7 - i);
-      digitalWrite(iClockPin, LOW);
-      digitalWrite(iClockPin, HIGH);
-   }
-   if (byDataIn != 0 && byDataIn != 1 && byDataIn != 2 && byDataIn != 4 && byDataIn != 8 && byDataIn != 16 && byDataIn != 32 && byDataIn != 64 && byDataIn != 128)
-   {
-      byDataIn = 0;
-   }
-   if (byDataIn != byLastFlickerableState)
-   {
-      llLastDebounceTime = millis();
-      byLastFlickerableState = byDataIn;
-   }
-   if ((byLastStadyState != byDataIn) && ((millis() - llLastDebounceTime) > DEBOUNCE_DELAY))
-   {
-      if (byDataIn != 0)
-         iLastActiveBit = log2(byDataIn & -byDataIn);
-      if (bitRead(byLastStadyState, iLastActiveBit) == LOW && bitRead(byDataIn, iLastActiveBit) == HIGH)
-         llPressedTime[iLastActiveBit] = millis();
-      else if (bitRead(byLastStadyState, iLastActiveBit) == HIGH && bitRead(byDataIn, iLastActiveBit) == LOW)
-         llReleasedTime[iLastActiveBit] = millis();
-      byLastStadyState = byDataIn;
-      long long llPressDuration = (llReleasedTime[iLastActiveBit] - llPressedTime[iLastActiveBit]);
-      if (llPressDuration > 0)
-      {
-         if (iLastActiveBit == 1)
-            StartStopRace();
-         else if (iLastActiveBit == 2)
-            ResetRace();
-         if (llPressDuration <= SHORT_PRESS_TIME)
-         {
-            log_d("%s SHORT press detected: %lldms", GetButtonString(iLastActiveBit).c_str(), llPressDuration);
-            if (iLastActiveBit == 3)
-               if (RaceHandler.RaceState == RaceHandler.RESET)
-                  RaceHandler.SetNumberOfDogs(1);
-               else
-                  RaceHandler.SetDogFault(0);
-            else if (iLastActiveBit == 6)
-               if (RaceHandler.RaceState == RaceHandler.RESET)
-                  RaceHandler.SetNumberOfDogs(2);
-               else
-                  RaceHandler.SetDogFault(1);
-            else if (iLastActiveBit == 5)
-               if (RaceHandler.RaceState == RaceHandler.RESET)
-                  RaceHandler.SetNumberOfDogs(3);
-               else
-                  RaceHandler.SetDogFault(2);
-            else if (iLastActiveBit == 4)
-               if (RaceHandler.RaceState == RaceHandler.RESET)
-                  RaceHandler.SetNumberOfDogs(4);
-               else
-                  RaceHandler.SetDogFault(3);
-            else if (iLastActiveBit == 0 && (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET))
-               RaceHandler.ToggleAccuracy();
-            else if (iLastActiveBit == 7 && !bLaserActive && (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET))
-            {
-               digitalWrite(iLaserOutputPin, HIGH);
-               bLaserActive = true;
-               log_i("Turn Laser ON.");
-            }
-         }
-         else if (llPressDuration > SHORT_PRESS_TIME && llPressDuration <= VERYLONG_PRESS_TIME)
-         {
-            log_d("%s LONG press detected: %lldms", GetButtonString(iLastActiveBit).c_str(), llPressDuration);
-            if (iLastActiveBit == 3) 
-               RaceHandler.ToggleRerunsOffOn(2);
-            else if (iLastActiveBit == 6 && RaceHandler.RaceState == RaceHandler.RESET)
-               LightsController.ToggleStartingSequence();
-            else if (iLastActiveBit == 0)
-               RaceHandler.ToggleRunDirection();
-            else if (iLastActiveBit == 7 && RaceHandler.RaceState == RaceHandler.RESET)
-               ToggleWifi();
-         }
-         else if (llPressDuration > VERYLONG_PRESS_TIME)
-         {
-            log_d("%s VERY LONG press detected: %lldms", GetButtonString(iLastActiveBit).c_str(), llPressDuration);
-            if (iLastActiveBit == 7 && RaceHandler.RaceState == RaceHandler.RESET)
-               FactoryReset();
-         }
-      }
-   }
-   if ((bLaserActive) && ((millis() - llReleasedTime[7] > iLaserOnTime * 1000) || RaceHandler.RaceState == RaceHandler.STARTING || RaceHandler.RaceState == RaceHandler.RUNNING))
-   {
-      digitalWrite(iLaserOutputPin, LOW);
-      bLaserActive = false;
-      log_i("Turn Laser OFF.");
-   }
-}
-
-/// <summary>
-///   Factory Reset - erasing and initializing NVM.
-/// </summary>
-void FactoryReset()
-{
-   Serial.println("Trying to erse all NVS flash...");
-   if (nvs_flash_erase() != ESP_OK) Serial.println("===> Error with Flash Erase.");
-   if (nvs_flash_init() != ESP_OK) Serial.println("===> Error with Flash INIT.");
-   vTaskDelay(1000);
-   ESP.restart();
-}
-
 
 /// <summary>
 ///   Gets pressed button string for consol printing.
@@ -603,7 +485,7 @@ void Core1Race(void *parameter)
 
 void Core1Lights(void *parameter)
 {
-   LightsController.init(&LightsStrip);
+   LightsController.init(iLatchPin, iClockPin, iDataPin);
    for (;;)
    {
       LightsController.Main();
@@ -611,4 +493,12 @@ void Core1Lights(void *parameter)
    }
 }
 
-
+/*void Core1LCD(void *parameter)
+{
+   LCDController.init(&lcd, &lcd2);
+   for (;;)
+   {
+      LCDController.Main();
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+   }
+}*/

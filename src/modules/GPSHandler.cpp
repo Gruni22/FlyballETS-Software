@@ -1,29 +1,27 @@
 //
 #include "GPSHandler.h"
 #include "LCDController.h"
-using namespace std;
 
 HardwareSerial GPSSerial(1);
 
-TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120};
-TimeChangeRule CET = {"CET", Last, Sun, Oct, 3, 60};
+TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120}; // UTC + 2 hours
+TimeChangeRule CET = {"CET", Last, Sun, Oct, 3, 60};    // UTC + 1 hour
 Timezone euCentral(CEST, CET);
 
 void GPSHandlerClass::_HandleSerialPort()
 {
    while (GPSSerial.available() > 0)
    {
-      char cInChar = GPSSerial.read();
+      char cInChar = GPSSerial.read(); // Read a character
       _Tgps.encode(cInChar);
+      // Serial.write(cInChar);
    }
 }
 
 void GPSHandlerClass::init(uint8_t _iGPSrxPin, uint8_t _iGPStxPin)
 {
-   std::string strDate = __DATE__;
-   strDate.erase(0, strDate.size() - 4);
-   _iCompilationYear = stoi(strDate);
    GPSSerial.begin(9600, SERIAL_8N1, _iGPSrxPin, _iGPStxPin);
+   // vTaskDelay(200);
    _HandleSerialPort();
    _FormatTime();
    log_i("Initial UTC time:  %s", _cUTCTime);
@@ -52,7 +50,7 @@ void GPSHandlerClass::loop()
 
 char *GPSHandlerClass::GetUtcDateAndTime()
 {
-   if (!_bGSPconnected)
+   if (!_bGSPconnected) // Use local time if GPS time is not available
    {
       tmElements_t tm;
       timeLocal = euCentral.toUTC(now());
@@ -79,7 +77,7 @@ void GPSHandlerClass::_FormatTime()
    tmElements_t tm;
    if (_Tgps.date.year() == 2000)
    {
-      tm.Year = (_iCompilationYear - 1970);
+      tm.Year = (2023 - 1970);
       tm.Month = 1;
       tm.Day = 1;
       tm.Hour = 12;
