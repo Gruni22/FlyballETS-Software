@@ -45,7 +45,7 @@ void LCDControllerClass::init(LiquidCrystal *Clcd1, LiquidCrystal *Clcd2)
    _UpdateLCD(1, 0, String("1:   0.000  +  0.000    |   WELCOME  000"), 40);
    _UpdateLCD(2, 0, String("2:   0.000  +  0.000    | Team:    0.000"), 40);
    _UpdateLCD(3, 0, String("3:   0.000  +  0.000    |   CT:    0.000"), 40);
-   _UpdateLCD(4, 0, String("4:   0.000  +  0.000    |       W      >"), 40);
+   _UpdateLCD(4, 0, String("4:   0.000  +  0.000    | BayernXpress >"), 40);
 
    _SlcdfieldFields[D1Time] = {true, 1, 3, 7, String("  0.000")};
    _SlcdfieldFields[D2Time] = {true, 2, 3, 7, String("  0.000")};
@@ -240,7 +240,7 @@ void LCDControllerClass::reInit()
    _UpdateLCD(1, 0, String("1:                      |               "), 40);
    _UpdateLCD(2, 0, String("2:                      | Team:         "), 40);
    _UpdateLCD(3, 0, String("3:                      |   CT:         "), 40);
-   _UpdateLCD(4, 0, String("4:                      |               "), 40);
+   _UpdateLCD(4, 0, String("4:                      | BayernXpress  "), 40);
    bUpdateNonTimerLCDdata = true;
    bUpdateTimerLCDdata = true;
    bExecuteLCDUpdate = true;
