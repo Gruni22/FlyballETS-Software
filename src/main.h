@@ -18,14 +18,11 @@
 //#include <time.h>
 
 // Private libs
-#include "GPSHandler.h"
 #include "SettingsManager.h"
 #include "WebHandler.h"
 #include "LCDController.h"
 #include "RaceHandler.h"
 #include "LightsController.h"
-#include "BatterySensor.h"
-#include "SDcardController.h"
 //#include "SystemManager.h"
 //#include "SlaveHandler.h"
 //#include "WifiManager.h"
@@ -45,7 +42,6 @@ void StopRaceMain();
 void mdnsServerSetup();
 void serialEvent();
 void HandleSerialCommands();
-void ToggleWifi();
 void Core1Race(void *parameter);
 void Core1Lights(void *parameter);
 void Core1LCD(void *parameter);

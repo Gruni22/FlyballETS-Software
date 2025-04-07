@@ -22,6 +22,12 @@
 #include "SettingsManager.h"
 #include "config.h"
 #include "WebHandler.h"
+#include <Timezone.h>
+
+
+TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120}; // UTC + 2 hours
+TimeChangeRule CET = {"CET", Last, Sun, Oct, 3, 60};    // UTC + 1 hour
+Timezone euCentral(CEST, CET);
 
 /// <summary>
 ///   Initialises this object andsets all counters to 0.
@@ -830,7 +836,7 @@ void RaceHandlerClass::StartRaceTimer()
 {
    llRaceStartTime = _llLastDogExitTime = MICROS + 3000000;
    _ChangeRaceState(STARTING);
-   cRaceStartTimestamp = GPSHandler.GetLocalTimestamp();
+   cRaceStartTimestamp = GetLocalTimestamp();
    log_i("Timestamp: %s", cRaceStartTimestamp);
 }
 
@@ -1835,6 +1841,27 @@ void RaceHandlerClass::_AddToTransitionString(STriggerRecord _InterruptTrigger)
       _strTransition.replace("bBb", "b");
       log_d("Tstring bBb replaced with b");
    }
+}
+
+char *RaceHandlerClass::GetUtcDateAndTime()
+{
+   tmElements_t tm;
+   timeLocal = euCentral.toUTC(now());
+   breakTime(timeLocal, tm);
+   sprintf(_cUTCTime, "%i-%02i-%02iT%02i:%02i:%02iZ", tm.Year + 1970, tm.Month, tm.Day, tm.Hour, tm.Minute, tm.Second);
+   return _cUTCTime;
+}
+
+char *RaceHandlerClass::GetLocalTimestamp()
+{
+   sprintf(_cLocalTimestamp, "%02i:%02i:%02i", hour(), minute(), second());
+   return _cLocalTimestamp;
+}
+
+char *RaceHandlerClass::GetDate()
+{
+   sprintf(_cDate, "%i-%02i-%02i", year(), month(), day());
+   return _cDate;
 }
 
 RaceHandlerClass RaceHandler;

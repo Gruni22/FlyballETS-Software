@@ -11,14 +11,11 @@
 #include "LCDController.h"
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
-#include "SDcardController.h"
 #include <ArduinoJson.h>
 #include "RaceHandler.h"
 #include "Structs.h"
 #include "LightsController.h"
-#include "BatterySensor.h"
 #include <AsyncTCP.h>
-#include "GPSHandler.h"
 #include <rom/rtc.h>
 #include "index.html.gz.h"
 #include "ota&fs.h"

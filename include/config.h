@@ -29,10 +29,6 @@
 #define NumSimulatedRaces 52     // Number of prepeared simulated races. Sererial interface command to change interface: e.g. "race 1"
 #define TRIGGER_QUEUE_LENGTH 60  // Number of triggers in the queue
 
-#define BatteryCalibration false // after setting to true LCD will display analog read value from battery pin (range 0-4095). This is handfull for battery volate curve definition (dPinVoltage)
-
-#define LIGHTSCHAINS 1           // Numer of WS281x lights chains. 1 - one chain of 5 pixels/lights, 2 - two chains --> 10 pixels/lights, etc.
-
 #define EEPROM_SIZE 4096         // EEPROM size in bytes
 #define SPI_FLASH_SEC_SIZE 4096  // Flash Sector Size declaration for ESP32 as it seems to become removed from embedded libraries
 

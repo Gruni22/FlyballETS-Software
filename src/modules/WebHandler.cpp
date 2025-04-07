@@ -631,8 +631,7 @@ void WebHandlerClass::_SendSystemData(int8_t iClientId)
       JsonSystemData["FW"] = (char *)FW_VER;
       JsonSystemData["RID"] = RaceHandler.iCurrentRaceId + 1;
       JsonSystemData["clients"] = _ws->count();
-      JsonSystemData["sTime"] = (char *)GPSHandler.GetUtcDateAndTime();
-      JsonSystemData["bat"] = BatterySensor.GetBatteryPercentage();
+      JsonSystemData["sTime"] = (char *)RaceHandler.GetUtcDateAndTime();
       JsonSystemData["dir"] = _strRunDirection;
 
       size_t len = measureJson(JsonSystemDataDoc);
@@ -839,7 +838,6 @@ void WebHandlerClass::printProgress(size_t prg, size_t sz)
       String sProgressPercentage = String(iProgressPercentage);
       while (sProgressPercentage.length() < 3)
          sProgressPercentage = " " + sProgressPercentage;
-      LCDController.FirmwareUpdateProgress(sProgressPercentage);
       uiLastProgress = iProgressPercentage;
    }
 }

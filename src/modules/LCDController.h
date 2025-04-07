@@ -21,7 +21,6 @@
 #include <LiquidCrystal.h>
 #include "LightsController.h"
 #include "RaceHandler.h"
-#include "BatterySensor.h"
 
 class LCDControllerClass
 {
@@ -57,13 +56,9 @@ public:
       CleanTime,   // 13
       RaceState,   // 14
       RaceID,      // 15
-      BattLevel,   // 16
-      WifiState,   // 17
-      GpsState,    // 18
-      SDcardState, // 19
-      BoxDirection // 20
+      BoxDirection // 16
    };
-   volatile bool bUpdateThisLCDField[21];
+   volatile bool bUpdateThisLCDField[17];
 
    void UpdateField(LCDFields lcdfieldField, String strNewValue);
 
@@ -85,7 +80,7 @@ private:
       uint8_t iFieldLength;
       String strText;
    };
-   struct SLCDField _SlcdfieldFields[21];
+   struct SLCDField _SlcdfieldFields[17];
 };
 
 extern LCDControllerClass LCDController;

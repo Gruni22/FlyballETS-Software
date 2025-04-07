@@ -15,6 +15,13 @@ class RaceHandlerClass
    friend class WebHandlerClass;
 
 protected:
+   void _FormatTime();
+   char _cUTCTime[25];
+   char _cLocalDateAndTime[25];
+   char _cLocalTimestamp[9];
+   char _cDate[11];
+   unsigned long long llLastGPSRead = 0;
+
 public:
    void init(uint8_t iS1Pin, uint8_t iS2Pin);
    enum RaceStates
@@ -72,6 +79,10 @@ public:
    void ToggleAccuracy();
    void ToggleRerunsOffOn(uint8_t _iState);
    void SetNumberOfDogs(uint8_t _iNumberOfRacingDogs);
+   char *GetUtcDateAndTime();
+   char *GetLocalTimestamp();
+   char *GetDate();
+   time_t timeLocal;
 
 private:
    long long _llRaceTime;

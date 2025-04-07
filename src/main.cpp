@@ -296,24 +296,6 @@ void WiFiEvent(arduino_event_id_t event)
    }
 }
 
-void ToggleWifi()
-{
-   if (WiFi.getMode() == WIFI_MODE_AP)
-   {
-      WiFi.mode(WIFI_OFF);
-      LCDController.UpdateField(LCDController.WifiState, " ");
-      LCDController.bExecuteLCDUpdate = true;
-      log_i("WiFi OFF");
-   }
-   else
-   {
-      WiFi.mode(WIFI_AP);
-      LCDController.UpdateField(LCDController.WifiState, "W");
-      LCDController.bExecuteLCDUpdate = true;
-      log_i("WiFi ON");
-   }
-}
-
 void mdnsServerSetup()
 {
    MDNS.addService("http", "tcp", 80);
@@ -412,10 +394,6 @@ void HandleSerialCommands()
    // Reruns on
    if (strSerialData == "reruns on")
       RaceHandler.ToggleRerunsOffOn(0);
-   // Toggle wifi on/off
-   if (strSerialData == "wifi")
-      ToggleWifi();
-   // Toggle wifi on/off
    if (strSerialData == "fwver")
       Serial.printf("Firmware version: %s\r\n", FW_VER);
 
